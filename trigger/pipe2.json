@@ -1,0 +1,17 @@
+{
+	"name": "pipe2",
+	"properties": {
+		"annotations": [],
+		"runtimeState": "Stopped",
+		"pipelines": [],
+		"type": "ScheduleTrigger",
+		"typeProperties": {
+			"recurrence": {
+				"frequency": "Minute",
+				"interval": 15,
+				"startTime": "2026-07-09T09:28:00",
+				"timeZone": "India Standard Time"
+			}
+		}
+	}
+}
