@@ -28,7 +28,7 @@ jobs:
             echo "environment=adf-dev" >> $GITHUB_OUTPUT
           elif [ "$BRANCH" = "uat" ]; then
             echo "environment=adf-uat" >> $GITHUB_OUTPUT
-          elif [ "$BRANCH" = "main" ]; then
+          elif [ "$BRANCH" = "prod" ]; then
             echo "environment=adf-prod" >> $GITHUB_OUTPUT
           else
             echo "ERROR: Unexpected branch '$BRANCH'"
@@ -54,7 +54,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18.17.0'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install Dependencies
