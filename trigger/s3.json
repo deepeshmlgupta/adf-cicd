@@ -1,0 +1,17 @@
+{
+	"name": "s3",
+	"properties": {
+		"annotations": [],
+		"runtimeState": "Started",
+		"pipelines": [],
+		"type": "ScheduleTrigger",
+		"typeProperties": {
+			"recurrence": {
+				"frequency": "Minute",
+				"interval": 15,
+				"startTime": "2026-07-10T08:08:00",
+				"timeZone": "India Standard Time"
+			}
+		}
+	}
+}
