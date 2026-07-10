@@ -5,13 +5,11 @@ on:
     branches:
       - dev
       - uat
-      - main
+      - prod
 
 jobs:
 
   # ── JOB 1: RESOLVE ENVIRONMENT ──────────────────────────────────────────
-  # Runs first now — build job needs the source ADF resource ID
-  # which comes from the GitHub Environment, so we resolve it first.
 
   resolve-environment:
     name: Resolve Target Environment
@@ -36,10 +34,9 @@ jobs:
           fi
 
   # ── JOB 2: BUILD ────────────────────────────────────────────────────────
-  # Now has environment: set so it can read SOURCE_ADF_RESOURCE_ID from
-  # the GitHub Environment vars instead of a repo-level var.
-  # No approval gate on adf-dev/uat/prod for the build job —
-  # approval only fires on the deploy job below.
+  # Reads TARGET_ADF_RESOURCE_ID from the GitHub Environment.
+  # Passes it to validate + export so ARM template is stamped
+  # with the correct factory details for the target environment.
 
   build:
     name: Build - Export ARM Templates
@@ -54,35 +51,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install Dependencies
         run: npm install
 
-      # Parse source ADF resource ID from environment var
-      # /subscriptions/<SUB>/resourceGroups/<RG>/providers/Microsoft.DataFactory/factories/<NAME>
-      - name: Parse Source ADF Resource ID
-        id: parse-source
-        run: |
-          RESOURCE_ID="${{ vars.SOURCE_ADF_RESOURCE_ID }}"
-
-          SOURCE_SUB=$(echo "$RESOURCE_ID"  | cut -d'/' -f3)
-          SOURCE_RG=$(echo "$RESOURCE_ID"   | cut -d'/' -f5)
-          SOURCE_ADF=$(echo "$RESOURCE_ID"  | cut -d'/' -f9)
-
-          echo "source_sub=$SOURCE_SUB"   >> $GITHUB_OUTPUT
-          echo "source_rg=$SOURCE_RG"     >> $GITHUB_OUTPUT
-          echo "source_adf=$SOURCE_ADF"   >> $GITHUB_OUTPUT
-
-          echo "Source ADF: $SOURCE_ADF (RG: $SOURCE_RG)"
-
       - name: Validate ADF Resources
-        run: |
-          npm run validate $GITHUB_WORKSPACE ${{ vars.SOURCE_ADF_RESOURCE_ID }}
+        run: npm run validate $GITHUB_WORKSPACE ${{ vars.TARGET_ADF_RESOURCE_ID }}
 
       - name: Export ARM Templates
-        run: |
-          npm run export $GITHUB_WORKSPACE ${{ vars.SOURCE_ADF_RESOURCE_ID }}
+        run: npm run export $GITHUB_WORKSPACE ${{ vars.TARGET_ADF_RESOURCE_ID }}
 
       - name: Upload ARM Artifact
         uses: actions/upload-artifact@v4
@@ -95,8 +73,6 @@ jobs:
           if-no-files-found: error
 
   # ── JOB 3: DEPLOY ───────────────────────────────────────────────────────
-  # environment: here is what triggers the approval gate for uat and prod.
-  # Reads TARGET_ADF_RESOURCE_ID from the same GitHub Environment.
 
   deploy:
     name: Deploy to ${{ needs.resolve-environment.outputs.environment }}
@@ -118,20 +94,21 @@ jobs:
           [ -f ./arm-output/ARMTemplateForFactory.json ] || \
             { echo "ERROR: ARM template missing"; exit 1; }
 
+      # Parse sub, RG, factory name out of the resource ID
       - name: Parse Target ADF Resource ID
         id: parse-target
         run: |
           RESOURCE_ID="${{ vars.TARGET_ADF_RESOURCE_ID }}"
 
-          TARGET_SUB=$(echo "$RESOURCE_ID"  | cut -d'/' -f3)
-          TARGET_RG=$(echo "$RESOURCE_ID"   | cut -d'/' -f5)
-          TARGET_ADF=$(echo "$RESOURCE_ID"  | cut -d'/' -f9)
+          TARGET_SUB=$(echo "$RESOURCE_ID" | cut -d'/' -f3)
+          TARGET_RG=$(echo "$RESOURCE_ID"  | cut -d'/' -f5)
+          TARGET_ADF=$(echo "$RESOURCE_ID" | cut -d'/' -f9)
 
-          echo "target_sub=$TARGET_SUB"   >> $GITHUB_OUTPUT
-          echo "target_rg=$TARGET_RG"     >> $GITHUB_OUTPUT
-          echo "target_adf=$TARGET_ADF"   >> $GITHUB_OUTPUT
+          echo "target_sub=$TARGET_SUB"  >> $GITHUB_OUTPUT
+          echo "target_rg=$TARGET_RG"    >> $GITHUB_OUTPUT
+          echo "target_adf=$TARGET_ADF"  >> $GITHUB_OUTPUT
 
-          echo "Target ADF: $TARGET_ADF (RG: $TARGET_RG)"
+          echo "Target → Sub: $TARGET_SUB | RG: $TARGET_RG | ADF: $TARGET_ADF"
 
       - name: Azure Login
         uses: azure/login@v2
@@ -173,15 +150,15 @@ jobs:
             echo "All running triggers stopped."
           fi
 
+      # ARM template already stamped with correct factory name via TARGET_ADF_RESOURCE_ID
+      # No factoryName override needed — it's already baked into the exported template
       - name: Deploy ARM Template
         uses: azure/arm-deploy@v2
         with:
           subscriptionId: ${{ steps.parse-target.outputs.target_sub }}
           resourceGroupName: ${{ steps.parse-target.outputs.target_rg }}
           template: ./arm-output/ARMTemplateForFactory.json
-          parameters: >
-            ./arm-output/ARMTemplateParametersForFactory.json
-            factoryName=${{ steps.parse-target.outputs.target_adf }}
+          parameters: ./arm-output/ARMTemplateParametersForFactory.json
 
       - name: Post-Deploy - Restore Triggers
         if: always()
@@ -208,12 +185,12 @@ jobs:
       - name: Deployment Summary
         if: always()
         run: |
-          echo "## ADF Deployment Summary"                                               >> $GITHUB_STEP_SUMMARY
-          echo "| Field | Value |"                                                       >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|"                                                                >> $GITHUB_STEP_SUMMARY
+          echo "## ADF Deployment Summary"                                                >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |"                                                        >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|"                                                                 >> $GITHUB_STEP_SUMMARY
           echo "| Environment | ${{ needs.resolve-environment.outputs.environment }} |"  >> $GITHUB_STEP_SUMMARY
-          echo "| Factory | ${{ steps.parse-target.outputs.target_adf }} |"             >> $GITHUB_STEP_SUMMARY
-          echo "| Resource Group | ${{ steps.parse-target.outputs.target_rg }} |"       >> $GITHUB_STEP_SUMMARY
-          echo "| Subscription | ${{ steps.parse-target.outputs.target_sub }} |"        >> $GITHUB_STEP_SUMMARY
-          echo "| Triggered By | ${{ github.actor }} |"                                 >> $GITHUB_STEP_SUMMARY
-          echo "| Commit SHA | ${{ github.sha }} |"                                     >> $GITHUB_STEP_SUMMARY
+          echo "| Factory | ${{ steps.parse-target.outputs.target_adf }} |"              >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | ${{ steps.parse-target.outputs.target_rg }} |"        >> $GITHUB_STEP_SUMMARY
+          echo "| Subscription | ${{ steps.parse-target.outputs.target_sub }} |"         >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered By | ${{ github.actor }} |"                                  >> $GITHUB_STEP_SUMMARY
+          echo "| Commit SHA | ${{ github.sha }} |"                                      >> $GITHUB_STEP_SUMMARY
